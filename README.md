@@ -21,18 +21,24 @@ An AI-powered email processing system that integrates with Microsoft Outlook to 
 | Testing | pytest + pytest-asyncio |
 | Linting / Formatting | flake8 + black |
 
+> **For detailed architecture and design rationale, see [docs/SYSTEM_LOGIC.md](./docs/SYSTEM_LOGIC.md).**
+
 ## Project Structure
 
 ```
 app/
-├── core/           # Config (pydantic-settings) and logging
-├── models/         # Pydantic models — emails, drafts, API responses
-├── services/       # email_parser, classifier, llm_service, draft_service, graph_service
-└── api/routes/     # health, auth, emails, drafts
+├── core/ # Config (pydantic-settings) and logging
+├── models/ # Pydantic models — emails, drafts, API responses
+├── services/ # email_parser, classifier, llm_service, draft_service, graph_service
+└── api/routes/ # health, auth, emails, drafts
 tests/
-├── unit/           # Parser, classifier, draft service tests
-└── integration/    # Email and draft route tests
+├── unit/ # Parser, classifier, draft service tests
+└── integration/ # Email and draft route tests
+docs/
+└── SYSTEM_LOGIC.md # Detailed system architecture and logic documentation
 ```
+
+> **For complete project structure and service-by-service breakdown, see [docs/SYSTEM_LOGIC.md](./docs/SYSTEM_LOGIC.md).**
 
 ## Getting Started
 
@@ -51,8 +57,8 @@ cd AI-Agent-Concept-Workshop-Academic-Automation
 
 # Create and activate virtual environment
 python -m venv venv
-venv\Scripts\activate       # Windows
-source venv/bin/activate    # macOS/Linux
+venv\Scripts\activate # Windows
+source venv/bin/activate # macOS/Linux
 
 # Install dependencies
 pip install -r requirements.txt -r requirements-dev.txt
@@ -104,11 +110,11 @@ pytest -v
 All 16 tests should pass:
 
 ```
-tests/integration/test_draft_routes.py   5 passed
-tests/integration/test_email_routes.py   2 passed
-tests/unit/test_classifier.py            1 passed
-tests/unit/test_draft_service.py         5 passed
-tests/unit/test_email_parser.py          3 passed
+tests/integration/test_draft_routes.py 5 passed
+tests/integration/test_email_routes.py 2 passed
+tests/unit/test_classifier.py 1 passed
+tests/unit/test_draft_service.py 5 passed
+tests/unit/test_email_parser.py 3 passed
 ```
 
 ## Environment Variables
@@ -123,6 +129,10 @@ tests/unit/test_email_parser.py          3 passed
 | `GROQ_MODEL` | Model name (default: `llama-3.3-70b-versatile`) |
 | `DEBUG` | Enable debug logging (default: `false`) |
 | `MAX_EMAIL_BODY_CHARS` | Max email body length sent to LLM (default: `4000`) |
+
+## Further Documentation
+
+For detailed system architecture, data flow diagrams, service-by-service breakdown, authentication flow, and workshop-friendly explanations, see [docs/SYSTEM_LOGIC.md](./docs/SYSTEM_LOGIC.md).
 
 ## License
 
