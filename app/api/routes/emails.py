@@ -26,7 +26,7 @@ async def process_email(req: ProcessRequest) -> APIResponse[ClassifiedEmail]:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
-@router.get("/inbox", response_model=APIResponse[list[ClassifiedEmail]], summary="Step 2 — Fetch & classify inbox emails")
+@router.get("/inbox", response_model=APIResponse[list[ClassifiedEmail]], include_in_schema=False)
 async def get_inbox(top: int = 10) -> APIResponse[list[ClassifiedEmail]]:
     try:
         await ensure_categories()

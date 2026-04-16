@@ -147,6 +147,97 @@ async def set_message_importance(message_id: str, urgency: str) -> None:
     logger.info("Set importance=%s category=%s on message %s", importance, category, message_id)
 
 
+_URGENCY_FOLDERS = ["High Urgency", "Medium Urgency", "Low Urgency", "AI Processed"]
+_folder_id_cache: dict[str, str] = {}
+
+
+async def ensure_folders() -> dict[str, str]:
+    """Create urgency mail folders if they don't exist. Returns a name→id map."""
+    token = get_access_token()
+    if not token:
+        return {}
+    if _folder_id_cache:
+        return _folder_id_cache
+
+    url = f"{settings.graph_api_base}/me/mailFolders"
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=15)
+        resp.raise_for_status()
+        existing = {f["displayName"]: f["id"] for f in resp.json().get("value", [])}
+
+        for name in _URGENCY_FOLDERS:
+            if name in existing:
+                _folder_id_cache[name] = existing[name]
+            else:
+                r = await client.post(
+                    url,
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "Content-Type": "application/json",
+                    },
+                    json={"displayName": name},
+                    timeout=15,
+                )
+                r.raise_for_status()
+                _folder_id_cache[name] = r.json()["id"]
+                logger.info("Created mail folder: %s", name)
+
+    return _folder_id_cache
+
+
+async def move_message(message_id: str, folder_name: str) -> None:
+    """Move a message into the named mail folder."""
+    token = get_access_token()
+    if not token:
+        return
+    folders = await ensure_folders()
+    folder_id = folders.get(folder_name)
+    if not folder_id:
+        logger.warning("Folder not found: %s", folder_name)
+        return
+    url = f"{settings.graph_api_base}/me/messages/{message_id}/move"
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            url,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+            json={"destinationId": folder_id},
+            timeout=15,
+        )
+        resp.raise_for_status()
+    logger.info("Moved message %s to folder %s", message_id, folder_name)
+
+
+async def save_draft_to_outlook(to: list[str], subject: str, body: str) -> str:
+    """Save a draft to Outlook's Drafts folder. Returns the Outlook draft message ID."""
+    token = get_access_token()
+    if not token:
+        raise RuntimeError("Not authenticated. Call GET /auth/login first.")
+    url = f"{settings.graph_api_base}/me/messages"
+    payload = {
+        "subject": subject,
+        "body": {"contentType": "Text", "content": body},
+        "toRecipients": [{"emailAddress": {"address": addr}} for addr in to],
+        "isDraft": True,
+    }
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            url,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+            timeout=15,
+        )
+        resp.raise_for_status()
+        outlook_id = resp.json()["id"]
+    logger.info("Saved draft to Outlook drafts folder: %s", outlook_id)
+    return outlook_id
+
+
 async def send_message(to: list[str], subject: str, body: str) -> None:
     token = get_access_token()
     if not token:

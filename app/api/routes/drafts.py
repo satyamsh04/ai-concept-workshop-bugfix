@@ -20,7 +20,7 @@ class GenerateRequest(BaseModel):
     instructions: Optional[str] = ""
 
 
-@router.post("/generate", response_model=APIResponse[Draft], status_code=201, summary="Step 3 — Generate AI draft reply")
+@router.post("/generate", response_model=APIResponse[Draft], status_code=201, include_in_schema=False)
 async def generate_draft(req: GenerateRequest) -> APIResponse[Draft]:
     """Takes a message_id from the inbox, generates an AI reply via Groq, and saves it as a pending draft."""
     try:
@@ -54,12 +54,12 @@ async def create_draft(data: DraftCreate) -> APIResponse[Draft]:
     return APIResponse(success=True, data=draft)
 
 
-@router.get("", response_model=APIResponse[list[Draft]], summary="Step 4a — List all pending drafts")
+@router.get("", response_model=APIResponse[list[Draft]], include_in_schema=False)
 async def list_drafts() -> APIResponse[list[Draft]]:
     return APIResponse(success=True, data=draft_service.list_drafts())
 
 
-@router.get("/{draft_id}", response_model=APIResponse[Draft])
+@router.get("/{draft_id}", response_model=APIResponse[Draft], include_in_schema=False)
 async def get_draft(draft_id: str) -> APIResponse[Draft]:
     draft = draft_service.get_draft(draft_id)
     if draft is None:
@@ -67,7 +67,7 @@ async def get_draft(draft_id: str) -> APIResponse[Draft]:
     return APIResponse(success=True, data=draft)
 
 
-@router.patch("/{draft_id}", response_model=APIResponse[Draft], summary="Step 4b — Edit draft body or status")
+@router.patch("/{draft_id}", response_model=APIResponse[Draft], include_in_schema=False)
 async def update_draft(draft_id: str, data: DraftUpdate) -> APIResponse[Draft]:
     draft = draft_service.update_draft(draft_id, data)
     if draft is None:
@@ -82,7 +82,7 @@ async def delete_draft(draft_id: str) -> APIResponse[None]:
     return APIResponse(success=True, message="Draft deleted")
 
 
-@router.post("/{draft_id}/send", response_model=APIResponse[Draft], summary="Step 5 — Send draft via Outlook")
+@router.post("/{draft_id}/send", response_model=APIResponse[Draft], include_in_schema=False)
 async def send_draft(draft_id: str) -> APIResponse[Draft]:
     """Sends the draft email via Microsoft Graph and marks it as sent."""
     draft = draft_service.get_draft(draft_id)
