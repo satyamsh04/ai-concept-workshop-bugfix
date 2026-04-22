@@ -5,24 +5,18 @@ const GW_PORT = 18789;
 const BACKOFF_BASE = 1200;
 const BACKOFF_MAX = 20000;
 
-// System instructions prepended to the first message for each email session.
-const ACADEMIC_SYSTEM_PROMPT = `[Academic Email Assistant]
-You help university students and staff manage academic emails professionally.
-When classifying an email, respond ONLY with valid JSON using exactly these keys:
-  "urgency": "high" | "medium" | "low"
-  "intent": "inquiry" | "assignment" | "extension" | "grade" | "complaint" | "feedback" | "administrative" | "other"
-  "summary": one sentence, max 20 words
-When drafting replies, write plain professional text only — no markdown, no bullet points unless asked.
-Keep all replies concise and appropriate for a university context.`;
+// Gateway auth token from ~/.openclaw/openclaw.json → gateway.auth.token
+// Used when dangerouslyDisableDeviceAuth=true bypasses the device identity check.
+const GATEWAY_TOKEN = "56a6491a7961caed0b413c43880cbc151181621bf0055047";
 
 // ===== State =====
 let socket = null;
 let isConnected = false;
 let authToken = null;
-let sessionKey = "academic:email:default";
+let sessionKey = "agent:main:academic-email";
 let activeEmailId = null;        // hash of current email, used to detect email changes
 let currentEmail = null;         // { subject, from, to, date, body }
-let contextSent = false;         // whether ACADEMIC_SYSTEM_PROMPT + email context has been sent this session
+let contextSentForEmail = null;  // tracks which email subject context has been sent for
 let streamBuffer = "";           // accumulates streaming agent.delta text
 let activeRunId = null;
 let waitingForResponse = false;
@@ -79,12 +73,18 @@ function applyTheme() {
 
 // ===== Token =====
 function loadToken() {
-  try { authToken = localStorage.getItem("acad-gateway-token") || null; } catch (_) {}
-  if (!authToken) {
-    showTokenPrompt();
-  } else {
-    connectGateway();
+  try {
+    const stored = localStorage.getItem("acad-gateway-token");
+    // If stored token differs from the compiled default, trust the stored one (user override).
+    // Otherwise seed localStorage with the compiled default so it shows correctly in settings.
+    if (!stored) {
+      localStorage.setItem("acad-gateway-token", GATEWAY_TOKEN);
+    }
+    authToken = stored || GATEWAY_TOKEN;
+  } catch (_) {
+    authToken = GATEWAY_TOKEN;
   }
+  connectGateway();
 }
 
 function showTokenPrompt() {
@@ -155,10 +155,9 @@ function readEmail() {
       const newId = hashString(subject + "|" + from + "|" + date);
       if (newId !== activeEmailId) {
         activeEmailId = newId;
-        sessionKey = `academic:email:${newId}`;
-        contextSent = false;
+        sessionKey = `agent:main:academic-email-${newId}`;
+        contextSentForEmail = null;
         lastShownMsgId = null;
-        clearBadges();
         clearChatMessages();
         if (isConnected) loadHistory();
       }
@@ -187,9 +186,8 @@ function renderEmailHeader(subject, from, date) {
 
 // ===== Gateway Connection =====
 function getGatewayUrl() {
-  const loc = window.location;
-  if (loc.protocol === "https:") return `wss://${loc.host}/ai-gateway`;
-  return `ws://127.0.0.1:${GW_PORT}`;
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  return `${proto}://${location.host}/ai-gateway`;
 }
 
 function connectGateway() {
@@ -239,7 +237,7 @@ function sendHandshake() {
     minProtocol: 3,
     maxProtocol: 3,
     client: {
-      id: "academic-email-assistant",
+      id: "openclaw-control-ui",
       version: "1.0.0",
       platform: navigator.platform || "web",
       mode: "webchat",
@@ -248,7 +246,7 @@ function sendHandshake() {
     role: "operator",
     scopes: ["operator.admin"],
     caps: ["tool-events"],
-    auth: authToken ? { token: authToken } : {},
+    auth: { token: authToken || GATEWAY_TOKEN },
   };
 
   callRpc("connect", params)
@@ -297,9 +295,19 @@ function handleIncoming(raw) {
 }
 
 // ===== Event Handler =====
+function isRawToolCall(text) {
+  const t = text.trim();
+  try {
+    const obj = JSON.parse(t);
+    if (obj && typeof obj.name === "string" && obj.parameters !== undefined) return true;
+  } catch (_) {}
+  // Catch malformed tool call JSON (unescaped inner quotes break JSON.parse)
+  return /^\{"name"\s*:\s*"[^"]+"\s*,\s*"parameters"\s*:/.test(t);
+}
+
 function flushStream() {
   const text = streamBuffer.trim();
-  if (text) addMessage("ai", text);
+  if (text && !isRawToolCall(text)) addMessage("ai", text);
   streamBuffer = "";
 }
 
@@ -361,7 +369,7 @@ function handleEvent(evt) {
       const content = payload.content || payload.text || payload.message || "";
       if (content) {
         const text = typeof content === "string" ? content : JSON.stringify(content);
-        addMessage("ai", text);
+        if (!isRawToolCall(text)) addMessage("ai", text);
       }
       if (!activeRunId) hideTyping();
       break;
@@ -401,12 +409,11 @@ function loadHistory() {
         const text = extractText(msg);
         if (!text) continue;
         if (msg.role === "user") {
-          const m = text.match(/User message:\s*([\s\S]*)/);
+          const m = text.match(/User question:\s*([\s\S]*)/);
           addMessage("user", m ? m[1].trim() : text.trim());
         } else if (msg.role === "assistant") {
           addMessage("ai", text.trim());
           lastShownMsgId = msg.__openclaw?.id || msg.responseId || msg.timestamp || null;
-          tryRenderClassification(text.trim());
         }
       }
     })
@@ -434,7 +441,6 @@ function fetchLatestReply() {
           historyFetching = false;
           lastShownMsgId = msgId;
           addMessage("ai", text.trim());
-          tryRenderClassification(text.trim());
         } else if (msgId === lastShownMsgId) {
           historyFetching = false;
           setTimeout(fetchLatestReply, 2000);
@@ -476,15 +482,14 @@ function sendMessage(text) {
 
   let fullText = text;
 
-  // On first message for this email, prepend system context
-  if (currentEmail && !contextSent) {
+  if (currentEmail && contextSentForEmail !== currentEmail.subject) {
     const body = (currentEmail.body || "").slice(0, 3000);
     const custom = getSavedSystemPrompt();
-    let prefix = ACADEMIC_SYSTEM_PROMPT;
-    if (custom) prefix += `\n\nAdditional instructions: ${custom}`;
-    prefix += `\n\n[Email Context]\nSubject: ${currentEmail.subject}\nFrom: ${currentEmail.from}\nTo: ${currentEmail.to}\nDate: ${currentEmail.date}\n\nBody:\n${body}\n\n---\n\n`;
-    fullText = prefix + `User message: ${text}`;
-    contextSent = true;
+    let prefix = "";
+    if (custom) prefix += `[System instructions]\n${custom}\n\n`;
+    prefix += `[Current email context]\nSubject: ${currentEmail.subject}\nFrom: ${currentEmail.from}\nTo: ${currentEmail.to}\nDate: ${currentEmail.date}\n\nBody:\n${body}\n\n---\n\n`;
+    fullText = prefix + `User question: ${text}`;
+    contextSentForEmail = currentEmail.subject;
   }
 
   callRpc("chat.send", {
@@ -497,98 +502,13 @@ function sendMessage(text) {
     .catch(err => { hideTyping(); addMessage("err", "Send failed: " + err.message); });
 }
 
-// ===== Classification Feature =====
-function classifyEmail() {
-  if (!currentEmail) { addMessage("err", "No email selected."); return; }
-  addMessage("user", "Classify this email");
-  showTyping();
-  waitingForResponse = true;
-  sendMessage('Classify this email. Respond with ONLY a JSON object with keys "urgency", "intent", and "summary".');
-}
-
-function tryRenderClassification(text) {
-  const json = extractJson(text);
-  if (!json) return;
-  if (!json.urgency && !json.intent) return;
-  renderBadges(json);
-}
-
-function extractJson(text) {
-  try {
-    const clean = text.trim();
-    if (clean.startsWith("{")) return JSON.parse(clean);
-    const match = clean.match(/```(?:json)?\s*([\s\S]*?)```/);
-    if (match) return JSON.parse(match[1].trim());
-  } catch (_) {}
-  return null;
-}
-
-function renderBadges(data) {
-  const container = $("email-tags");
-  if (!container) return;
-
-  clearBadges();
-
-  if (data.urgency) {
-    const b = document.createElement("span");
-    b.className = `badge badge-${data.urgency}`;
-    b.textContent = data.urgency.toUpperCase();
-    container.appendChild(b);
-  }
-
-  if (data.intent) {
-    const b = document.createElement("span");
-    b.className = "badge badge-info";
-    b.textContent = data.intent;
-    container.appendChild(b);
-  }
-
-  if (data.summary) {
-    const s = document.createElement("div");
-    s.style.cssText = "font-size:11px;color:var(--text-secondary);margin-top:4px;font-style:italic;";
-    s.textContent = data.summary;
-    container.appendChild(s);
-  }
-
-  $("email-info").style.display = "block";
-  $("email-tags").style.display = "flex";
-  $("email-tags").style.flexWrap = "wrap";
-}
-
-function clearBadges() {
-  const t = $("email-tags");
-  if (t) t.innerHTML = "";
-}
-
-// ===== Quick Actions =====
-function handleQuickAction(type) {
-  if (!currentEmail) { addMessage("err", "No email selected."); return; }
-
-  const prompts = {
-    summarise: "Summarise this email in 2-3 sentences.",
-    extension: "Draft a professional extension request reply to this email on my behalf. Keep it polite and concise.",
-  };
-
-  if (type === "classify") {
-    classifyEmail();
-    return;
-  }
-
-  const prompt = prompts[type];
-  if (!prompt) return;
-  addMessage("user", prompt);
-  showTyping();
-  waitingForResponse = true;
-  sendMessage(prompt);
-}
-
 // ===== Draft Reply =====
 function draftReply() {
   if (!currentEmail) { addMessage("err", "No email selected."); return; }
   addMessage("user", "Draft a reply to this email");
   showTyping();
   waitingForResponse = true;
-  sendMessage("Please draft a professional reply to this email. Match the tone of the original. Plain text only.");
+  sendMessage("Please draft a professional reply to this email. Respond in the same language as the original email.");
 }
 
 function useDraft() {
@@ -677,9 +597,6 @@ function bindEvents() {
   $("send-btn").addEventListener("click", handleSend);
   $("draft-btn").addEventListener("click", draftReply);
   $("use-draft-btn").addEventListener("click", useDraft);
-  $("classify-btn").addEventListener("click", () => handleQuickAction("classify"));
-  $("summarise-btn").addEventListener("click", () => handleQuickAction("summarise"));
-  $("extension-btn").addEventListener("click", () => handleQuickAction("extension"));
 
   $("settings-btn").addEventListener("click", () => {
     const existing = document.getElementById("settings-panel");
