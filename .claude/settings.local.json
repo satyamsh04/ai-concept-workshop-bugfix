@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip --version)",
+      "Bash(py --version)",
+      "Bash(py -3 --version)",
+      "Bash(where python:*)",
+      "Bash(where python3:*)",
+      "Bash(where py:*)",
+      "Read(//c/Users/Oscar/AppData/Local/Programs/**)",
+      "Read(//c//**)",
+      "Read(//c/Users/Oscar/AppData/Local/**)",
+      "Bash(python -m venv venv)",
+      "Bash(venv/Scripts/pip install:*)",
+      "Bash(venv/Scripts/uvicorn app.main:app --reload)",
+      "Bash(taskkill /F /IM python.exe)",
+      "Bash(taskkill /F /IM pythonw.exe)",
+      "Bash(taskkill //F //IM python.exe)",
+      "Bash(venv/Scripts/pytest.exe -v)",
+      "Bash(venv/Scripts/pip.exe install:*)",
+      "Read(//c/Users/Oscar/WIL Project/**)",
+      "Read(//c/Users/Oscar/**)",
+      "Bash(rm -rf app/ tests/ venv/ .pytest_cache/ __pycache__)",
+      "Bash(rm -f requirements.txt requirements-dev.txt pytest.ini setup.cfg .env .env.example)",
+      "Bash(npm install *)"
+    ]
+  }
+}
