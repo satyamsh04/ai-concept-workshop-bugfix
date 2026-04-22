@@ -4,16 +4,16 @@ An Outlook add-in that brings a locally-hosted AI agent directly into your email
 
 ## Features
 
-- **Email Context** — automatically reads subject, sender, recipients, date, and body of the selected email
-- **Chat Interface** — ask questions, get summaries, translations, or any AI assistance
-- **Draft Reply** — one-click reply drafting based on the email context
-- **Send Reply** — opens Outlook's native reply compose with the drafted text pre-filled
-- **Pinned Sidebar** — stays open when switching between emails (pin icon in taskpane header)
-- **Per-Email Chat History** — each email gets its own session; switching back restores the conversation
-- **Smart Context** — email body sent only with the first message per email (saves tokens)
-- **Auto-Reconnect** — WebSocket reconnects automatically with exponential backoff
-- **Light/Dark Mode** — auto-detects Outlook theme
-- **Local AI only** — all inference runs on-device via Ollama; data never leaves your infrastructure
+📧 Email Context — Automatically reads subject, sender, recipients, date, and body of the selected email
+💬 Chat Interface — Ask questions about the email, get summaries, translations, or any AI assistance
+✏️ Draft Reply — One-click reply drafting based on the email context
+📤 Send Reply — Opens Outlook's native reply compose with the drafted text pre-filled
+🌗 Light/Dark Mode — Auto-detects Outlook theme (Office.js + prefers-color-scheme)
+📌 Pinned Sidebar — Stays open when switching between emails (VersionOverrides v1.1)
+💾 Per-Email Chat History — Each email gets its own session; switching back restores the conversation
+📎 Smart Context — Email body sent only with the first message per email (saves tokens)
+🔄 Auto-Reconnect — WebSocket reconnects automatically with exponential backoff
+🔒 Token-based Auth — Gateway token stored in browser localStorage, never in code
 
 ## Tech Stack
 
