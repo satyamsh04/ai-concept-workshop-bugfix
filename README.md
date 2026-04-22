@@ -1,4 +1,4 @@
-# Academic Email Assistant
+# Academic Email Assistant POC
 
 An Outlook add-in that brings a locally-hosted AI agent directly into your email sidebar. Built on the OpenClaw Gateway WebSocket protocol with Ollama for fully local inference — no data leaves your machine.
 
