@@ -56,6 +56,9 @@ module.exports = (env, argv) => {
           ws: true,
           changeOrigin: true,
           pathRewrite: { "^/ai-gateway": "" },
+          onProxyReqWs: (proxyReq) => {
+            proxyReq.setHeader("Origin", "http://127.0.0.1:18789");
+          },
         },
       ],
       port: 3000,
