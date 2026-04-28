@@ -110,7 +110,7 @@ With both the gateway and dev server running, open any email in Outlook and clic
 - Type a question and press Enter or click Send
 - Click **Draft Reply** to generate a professional reply
 - Click **Use Draft** to open Outlook's reply compose with the draft pre-filled
-- Click the 📌 pin icon to keep the sidebar open when switching emails
+- Click the 📌 pin icon to keep the sidebar open when switching emails.
 
 ## Gateway Token
 
