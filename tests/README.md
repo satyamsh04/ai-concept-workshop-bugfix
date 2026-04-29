@@ -61,7 +61,20 @@ All manual tests are documented in `manual/TEST_PROCEDURES.md`. These require:
 
 ## Manual Test Cases
 
-The manual test procedures are documented in `manual/TEST_PROCEDURES.md` and cover:
+The manual test procedures are documented in `manual/TEST_PROCEDURES.md` and cover both response-based testing and system/integration testing.
+
+### System, UI, and Integration Tests
+- TC-01: Outlook add-in loading
+- TC-02: Email context extraction
+- TC-03: Gateway token connection
+- TC-04: Invalid or missing token handling
+- TC-05: End-to-end workflow connection validation
+- TC-09: Empty/unreadable email body
+- TC-11: Very long email body
+- TC-12: Gateway/model unavailable
+- TC-14: Privacy and data handling
+
+### Response-Based and Extended Manual Tests
 - TC-06: Basic email question
 - TC-07: Draft reply generation
 - TC-08: Use Draft in Outlook
