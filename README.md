@@ -22,7 +22,7 @@ An Outlook add-in that brings a locally-hosted AI agent directly into your email
 | Add-in Framework | Office.js (Outlook taskpane) |
 | Build Tooling | Webpack 5 + webpack-dev-server |
 | AI Gateway | OpenClaw Gateway (local, WebSocket RPC) |
-| LLM | Ollama — llama3.1:8b (self-hosted) |
+| LLM | Ollama — qwen2.5:3b (self-hosted, ~2GB) |
 | Protocol | OpenClaw Gateway Protocol v3 (WebSocket) |
 | Auth | Token-based (stored in browser localStorage) |
 
@@ -38,14 +38,14 @@ Webpack Dev Server proxy
 OpenClaw Gateway (local)
         │
         ▼
-Ollama (llama3.1:8b — http://127.0.0.1:11434)
+Ollama (qwen2.5:3b — http://127.0.0.1:11434)
 ```
 
 ## Prerequisites
 
 - **Node.js 18+**
 - **OpenClaw** — `npm install -g openclaw`
-- **Ollama** — [ollama.com](https://ollama.com) with `llama3.1:8b` pulled
+- **Ollama** — [ollama.com](https://ollama.com)
 - **Outlook Desktop** (Windows, Classic) or Outlook Web (OWA)
 - **Microsoft 365** account with sideloading enabled
 
@@ -66,20 +66,59 @@ npx office-addin-dev-certs install
 ### 3. Pull the AI model
 
 ```bash
-ollama pull llama3.1:8b
+ollama pull qwen2.5:3b
 ```
+
+> `qwen2.5:3b` is recommended — fast on CPU, ~2GB, runs on most laptops. You can swap it for `llama3.1:8b` for higher quality if your machine supports it.
 
 ### 4. Configure OpenClaw
 
-Edit `~/.openclaw/openclaw.json` and add the following under `gateway.controlUi`:
+Edit `~/.openclaw/openclaw.json` and ensure it contains the following (create the file if it doesn't exist):
 
 ```json
-"controlUi": {
-  "dangerouslyDisableDeviceAuth": true
+{
+  "agents": {
+    "defaults": {
+      "model": "ollama/qwen2.5:3b"
+    }
+  },
+  "gateway": {
+    "mode": "local",
+    "auth": {
+      "mode": "token"
+    },
+    "controlUi": {
+      "allowedOrigins": ["https://localhost:3000"],
+      "dangerouslyDisableDeviceAuth": true
+    }
+  },
+  "plugins": {
+    "entries": {
+      "ollama": { "enabled": true }
+    }
+  }
 }
 ```
 
-### 5. Start OpenClaw Gateway
+### 5. Initialise the OpenClaw workspace
+
+The OpenClaw agent uses a workspace folder at `~/.openclaw/workspace/` to store its identity and memory. On first run it will run a bootstrap workflow if this folder isn't set up — to skip that, delete `BOOTSTRAP.md` from the workspace after the gateway first starts:
+
+```bash
+# Windows
+del "%USERPROFILE%\.openclaw\workspace\BOOTSTRAP.md"
+
+# macOS/Linux
+rm ~/.openclaw/workspace/BOOTSTRAP.md
+```
+
+Also add the following line to `~/.openclaw/workspace/AGENTS.md` at the top of the `## Session Startup` section:
+
+```
+Do not create or check for daily memory files automatically on session startup. Only create or update memory files when the user explicitly asks.
+```
+
+### 6. Start OpenClaw Gateway
 
 ```bash
 npm run gateway
@@ -87,17 +126,17 @@ npm run gateway
 
 Note the gateway token from `~/.openclaw/openclaw.json` → `gateway.auth.token`.
 
-### 6. Start the dev server
+### 7. Start the dev server
 
 ```bash
 npm start
 ```
 
-### 7. Sideload the add-in
+### 8. Sideload the add-in
 
 In Outlook, go to **Get Add-ins → My Add-ins → Add a custom add-in → Add from file** and select `manifest.xml`.
 
-### 8. Enter your gateway token
+### 9. Enter your gateway token
 
 Open any email and click **Academic Assistant** in the ribbon. Click the **⚙ settings icon** in the sidebar and paste your token from `~/.openclaw/openclaw.json` → `gateway.auth.token`. Click Save — the status bar should turn green (Connected).
 
@@ -110,7 +149,23 @@ With both the gateway and dev server running, open any email in Outlook and clic
 - Type a question and press Enter or click Send
 - Click **Draft Reply** to generate a professional reply
 - Click **Use Draft** to open Outlook's reply compose with the draft pre-filled
-- Click the 📌 pin icon to keep the sidebar open when switching emails.
+- Click the 📌 pin icon to keep the sidebar open when switching emails
+
+## Switching Models
+
+To use a different Ollama model, update two places:
+
+1. `~/.openclaw/openclaw.json` → `agents.defaults.model`
+2. `~/.openclaw/agents/main/agent/models.json` → add the model under the `ollama.models` array
+
+Then restart the gateway. Recommended models:
+
+| Model | Size | Notes |
+|---|---|---|
+| `qwen2.5:3b` | ~2GB | Default — fast, good instruction following |
+| `llama3.1:8b` | ~5GB | Higher quality, needs more RAM |
+| `llama3.2:3b` | ~2GB | Fast alternative |
+| `gemma3:4b` | ~3GB | Google, multimodal |
 
 ## Gateway Token
 
