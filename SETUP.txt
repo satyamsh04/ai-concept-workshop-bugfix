@@ -1,0 +1,153 @@
+Setup Guide for Academic Email Assistant
+=========================================
+----------------------
+
+There are four pieces that need to be running:
+
+* Ollama on Windows runs a local LLM on the GPU.
+* OpenClaw Gateway runs in WSL and exposes a WebSocket API on port 18789.
+* Webpack dev server serves the add-in over HTTPS at localhost:3000.
+* The add-in itself is sideloaded into Outlook.
+
+When all four are up, you can chat with an assistant inside Outlook.
+
+
+Required software
+-----------------
+
+* Windows 10/11 with Hyper-V available (built in)
+* WSL2 with Ubuntu 24.04: run "wsl --install -d Ubuntu-24.04" from PowerShell, then reboot
+* Ollama: https://ollama.com/download/windows
+* Node.js 22+ inside WSL via nvm: "curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash" then "nvm install 24"
+* OpenClaw CLI inside WSL: "npm install -g openclaw@latest"
+* A personal Outlook.com account. Custom add-in sideloading must be allowed. Most uni accounts block it.
+
+Use a private or incognito browser window when sideloading. Old Microsoft sessions (work or uni accounts) can leak into Outlook.com and hide the custom add-in option.
+
+
+One-time setup
+--------------
+
+1. Clone and install
+
+   Inside WSL:
+
+       cd ~ && mkdir -p dev && cd dev
+       git clone https://github.com/nachtsheim/openclaw-outlook-addin.git
+       cd openclaw-outlook-addin
+       npm install
+       npx office-addin-dev-certs install
+
+   A Windows dialog will ask you to trust a root cert. Click Yes.
+
+
+2. Pull a model and let Ollama listen on the network
+
+   In Windows PowerShell:
+
+       ollama pull qwen2.5:3b
+
+   Then make Ollama reachable from WSL:
+
+   a. Win key, type "environment variables", open "Edit the system environment variables".
+   b. Under User variables, add OLLAMA_HOST set to 0.0.0.0:11434.
+   c. Quit Ollama from the system tray and relaunch it.
+
+   Open the firewall once, in PowerShell as Administrator:
+
+       New-NetFirewallRule -DisplayName "Ollama WSL" -Direction Inbound -Protocol TCP -LocalPort 11434 -Action Allow
+
+
+3. Onboard OpenClaw
+
+   Inside WSL:
+
+       openclaw onboard --install-daemon
+
+   Wizard answers:
+
+   * Setup mode: Manual, Local gateway
+   * Model provider: Ollama
+   * Ollama base URL: http://<WINDOWS-HOST-IP>:11434
+     Find the IP with: ip route show | grep -i default | awk '{print $3}'
+   * Model: pick "ollama/qwen2.5:3b" from the list
+   * Gateway port: 18789
+   * Gateway bind: Loopback
+   * Gateway auth: Password.
+   * Channels: skip them all
+   * Hooks: Skip for now
+
+   After onboarding, lower the model context window. The default is too large for an 8 GB GPU.
+
+       nano ~/.openclaw/openclaw.json
+
+   In nano, press Ctrl+W, type "contextWindow", hit Enter. Change 131072 to 16000. If there are two entries (one per model), change both. Save with Ctrl+O, Enter, then Ctrl+X.
+
+   Restart the gateway:
+
+       systemctl --user restart openclaw-gateway
+
+
+4. Sideload the add-in into Outlook
+
+   In a private or incognito window, sign into Outlook on the web:
+
+   a. Open any email.
+   b. Click "..." in the email header, then "Get Add-ins", then "My add-ins", scroll down to "Custom add-ins", then "+ Add a custom add-in", then "Add from file".
+   c. Browse to \\wsl$\Ubuntu-24.04\home\<your-user>\dev\openclaw-outlook-addin\manifest.xml and install.
+
+
+
+Daily startup
+-------------
+
+* Ollama: launch from the Start menu (or enable autostart in Windows Settings, Apps, Startup)
+* OpenClaw Gateway: starts automatically as a systemd user service. Manual command: "systemctl --user start openclaw-gateway"
+* Webpack dev server: does not auto-start. Run: "cd ~/dev/openclaw-outlook-addin && npm run dev"
+
+The first time you open the sidebar, it'll ask for the gateway password (the one you picked during onboarding). After that it's saved in browser localStorage.
+
+Common issues
+-------------
+
+Gunauthorized: gateway password missing" even though you entered the password 
+ 
+  This is the issue that took the longest to track down. The sidebar shows the password saved, the gateway logs say it received an "auth" field, but the connection still fails with "password missing". The gateway has two separate functions for handling auth on a connect frame. One checks "auth.password" to decide if you're authenticated. A different function checks "auth.token" when verifying the device signature. They don't fall through to each other. If you only set "auth.password", the auth check passes but signature verification gets null and rejects. If you only set "auth.token", the signature passes but the auth check rejects.
+ 
+  Fix: the add-in needs to send the password under BOTH fields in the connect frame. Open the add-in source:
+ 
+      nano ~/dev/openclaw-outlook-addin/src/taskpane/taskpane.js
+ 
+  Press Ctrl+W, search for "auth: gatewayToken", hit Enter. The line probably looks like:
+ 
+      auth: gatewayToken ? { token: gatewayToken } : {},
+ 
+  Change it to send both fields:
+ 
+      auth: gatewayToken ? { password: gatewayToken, token: gatewayToken } : {},
+ 
+"Disconnected" status that won't clear (other causes)
+
+  * Webpack has stopped. Restart it with "npm run dev".
+  * WSL clock drift causes "device signature expired" errors. Fix with "sudo ntpdate -s pool.ntp.org", or run "wsl --shutdown" from PowerShell and reopen WSL.
+
+"model requires more system memory than is available"
+
+  Context window is too large for VRAM. Drop it lower in ~/.openclaw/openclaw.json (try 8000 if 16000 still fails) or switch to a smaller model.
+
+Ollama running on CPU instead of GPU
+
+  Check with "ollama ps". The PROCESSOR column should say "100% GPU". If it isn't, end stale ollama.exe processes in Task Manager, update NVIDIA drivers, or drop the context window.
+
+
+Useful paths
+------------
+
+* ~/.openclaw/openclaw.json: Gateway and model config
+* ~/dev/openclaw-outlook-addin/src/taskpane/taskpane.js: Main add-in logic
+* ~/dev/openclaw-outlook-addin/manifest.xml: Outlook manifest
+* \\wsl$\Ubuntu-24.04\home\<user>\dev\openclaw-outlook-addin\: Repo, accessed from Windows File Explorer
+
+Live gateway logs:
+
+    journalctl --user -u openclaw-gateway -f
