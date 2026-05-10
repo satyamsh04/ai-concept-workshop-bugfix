@@ -14,14 +14,14 @@ let socket = null;
 let isConnected = false;
 let authToken = null;
 let sessionKey = "agent:main:academic-email";
-let activeEmailId = null;        // hash of current email, used to detect email changes
-let currentEmail = null;         // { subject, from, to, date, body }
-let contextSentForEmail = null;  // tracks which email subject context has been sent for
-let streamBuffer = "";           // accumulates streaming agent.delta text
+let activeEmailId = null;
+let currentEmail = null;
+let contextSentForEmail = null;
+let streamBuffer = "";
 let activeRunId = null;
 let waitingForResponse = false;
 let rpcSeq = 0;
-let pendingRpc = new Map();      // id → { resolve, reject }
+let pendingRpc = new Map();
 let historyFetching = false;
 let lastShownMsgId = null;
 let retryCount = 0;
@@ -31,6 +31,13 @@ let retryTimer = null;
 const $ = id => document.getElementById(id);
 
 // ===== Boot =====
+
+/**
+ * Entry point called by Office.js when the add-in environment is ready.
+ * Applies the theme, binds UI events, loads the auth token, reads the current
+ * email, and registers an ItemChanged handler to update the panel when the
+ * user selects a different email.
+ */
 Office.onReady(info => {
   if (info.host === Office.HostType.Outlook) {
     applyTheme();
@@ -49,6 +56,12 @@ Office.onReady(info => {
 });
 
 // ===== Theme =====
+
+/**
+ * Detects whether Outlook is using a dark theme by sampling the background
+ * colour from the Office theme object. Falls back to the OS-level
+ * prefers-color-scheme media query if the Office theme is unavailable.
+ */
 function applyTheme() {
   let dark = false;
   try {
@@ -72,11 +85,14 @@ function applyTheme() {
 }
 
 // ===== Token =====
+
+/**
+ * Loads the gateway auth token from localStorage, seeding it with the compiled
+ * default if none has been saved yet, then opens the WebSocket connection.
+ */
 function loadToken() {
   try {
     const stored = localStorage.getItem("acad-gateway-token");
-    // If stored token differs from the compiled default, trust the stored one (user override).
-    // Otherwise seed localStorage with the compiled default so it shows correctly in settings.
     if (!stored) {
       localStorage.setItem("acad-gateway-token", GATEWAY_TOKEN);
     }
@@ -87,6 +103,10 @@ function loadToken() {
   connectGateway();
 }
 
+/**
+ * Renders an inline settings panel in the chat so the user can update their
+ * gateway token and custom system instructions without leaving Outlook.
+ */
 function showTokenPrompt() {
   const saved = getSavedSystemPrompt();
   const div = document.createElement("div");
@@ -133,11 +153,19 @@ function showTokenPrompt() {
   }, 80);
 }
 
+/** Returns any custom system instructions saved by the user in the settings panel. */
 function getSavedSystemPrompt() {
   try { return localStorage.getItem("acad-custom-instructions") || ""; } catch (_) { return ""; }
 }
 
 // ===== Email Reader =====
+
+/**
+ * Reads the currently selected email using the Office.js Mailbox API.
+ * Generates a unique session key per email so each conversation is stored
+ * separately in OpenClaw. Clears the chat and reloads history when the
+ * user switches to a different email.
+ */
 function readEmail() {
   const item = Office.context.mailbox.item;
   if (!item) { showNoEmail(); return; }
@@ -170,6 +198,7 @@ function readEmail() {
   }
 }
 
+/** Resets the email header to the placeholder state when no email is open. */
 function showNoEmail() {
   $("email-placeholder").style.display = "flex";
   $("email-info").style.display = "none";
@@ -177,6 +206,10 @@ function showNoEmail() {
   currentEmail = null;
 }
 
+/**
+ * Populates the email header with the subject, sender, and date, then
+ * refreshes the label buttons to reflect existing Outlook categories.
+ */
 function renderEmailHeader(subject, from, date) {
   $("email-placeholder").style.display = "none";
   $("email-info").style.display = "block";
@@ -187,6 +220,12 @@ function renderEmailHeader(subject, from, date) {
 }
 
 // ===== Categories =====
+
+/**
+ * Reads the Outlook categories on the open email and highlights the
+ * matching label buttons. Hides the label row on older Outlook versions
+ * that do not support the categories API.
+ */
 function loadCategories() {
   const item = Office.context.mailbox.item;
   if (!item || !item.categories) {
@@ -204,6 +243,14 @@ function loadCategories() {
   });
 }
 
+/**
+ * Ensures a category exists in the Outlook master list before applying it to
+ * an item. Office.js throws "Invalid categories" if addAsync is called with a
+ * name that hasn't been registered in masterCategories first.
+ *
+ * @param {string} name - Category display name (e.g. "Urgent")
+ * @param {Function} callback - Called once the category is confirmed to exist
+ */
 function ensureMasterCategory(name, callback) {
   const colorMap = {
     "Urgent": Office.MailboxEnums.CategoryColor.Preset0,
@@ -219,6 +266,12 @@ function ensureMasterCategory(name, callback) {
   });
 }
 
+/**
+ * Toggles an Outlook category on the current email. Removes it if already
+ * applied, or adds it (creating it in the master list first if needed).
+ *
+ * @param {string} name - Category name matching one of the label buttons
+ */
 function toggleCategory(name) {
   const item = Office.context.mailbox.item;
   if (!item) { addMessage("err", "No email selected."); return; }
@@ -245,11 +298,18 @@ function toggleCategory(name) {
 }
 
 // ===== Gateway Connection =====
+
+/** Returns the WebSocket URL for the OpenClaw Gateway proxy. */
 function getGatewayUrl() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   return `${proto}://${location.host}/ai-gateway`;
 }
 
+/**
+ * Opens a WebSocket connection to the OpenClaw Gateway (proxied by
+ * webpack-dev-server from /ai-gateway to port 18789). Implements
+ * exponential backoff on disconnect.
+ */
 function connectGateway() {
   if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) return;
 
@@ -265,7 +325,6 @@ function connectGateway() {
 
   socket.onopen = () => {
     setStatus("connecting");
-    // Give the server 2s to send connect.challenge; proceed anyway if it doesn't arrive.
     setTimeout(() => { if (!isConnected) sendHandshake(); }, 2000);
   };
 
@@ -281,6 +340,7 @@ function connectGateway() {
   socket.onerror = () => {};
 }
 
+/** Schedules a reconnection attempt using exponential backoff. */
 function scheduleRetry() {
   if (retryTimer) return;
   const delay = Math.min(BACKOFF_BASE * Math.pow(1.7, retryCount), BACKOFF_MAX);
@@ -291,7 +351,13 @@ function scheduleRetry() {
   }, delay);
 }
 
-// ===== Handshake (connect RPC) =====
+// ===== Handshake =====
+
+/**
+ * Sends the OpenClaw connect RPC to authenticate and negotiate protocol version.
+ * On success, marks the connection as ready and loads chat history for the
+ * current email.
+ */
 function sendHandshake() {
   const params = {
     minProtocol: 3,
@@ -321,6 +387,15 @@ function sendHandshake() {
 }
 
 // ===== RPC Layer =====
+
+/**
+ * Sends a JSON-RPC request over the WebSocket and returns a Promise that
+ * resolves with the result or rejects on error.
+ *
+ * @param {string} method - RPC method name (e.g. "chat.send")
+ * @param {object} params - Method parameters
+ * @returns {Promise<any>}
+ */
 function callRpc(method, params) {
   return new Promise((resolve, reject) => {
     if (!socket || socket.readyState !== WebSocket.OPEN) {
@@ -334,6 +409,13 @@ function callRpc(method, params) {
 }
 
 // ===== Message Handler =====
+
+/**
+ * Routes incoming WebSocket messages to the RPC response handler or the
+ * event handler depending on the message type.
+ *
+ * @param {string} raw - Raw JSON string received from the WebSocket
+ */
 function handleIncoming(raw) {
   let data;
   try { data = JSON.parse(raw); } catch (_) { return; }
@@ -355,22 +437,40 @@ function handleIncoming(raw) {
 }
 
 // ===== Event Handler =====
+
+/**
+ * Returns true if the text looks like a raw tool-call JSON object emitted by
+ * the agent. These are internal operations and should not be shown to the user.
+ *
+ * @param {string} text
+ * @returns {boolean}
+ */
 function isRawToolCall(text) {
   const t = text.trim();
   try {
     const obj = JSON.parse(t);
     if (obj && typeof obj.name === "string" && obj.parameters !== undefined) return true;
   } catch (_) {}
-  // Catch malformed tool call JSON (unescaped inner quotes break JSON.parse)
   return /^\{"name"\s*:\s*"[^"]+"\s*,\s*"parameters"\s*:/.test(t);
 }
 
+/**
+ * Flushes the accumulated stream buffer to the chat as a finalised AI message
+ * and clears the buffer.
+ */
 function flushStream() {
   const text = streamBuffer.trim();
   if (text && !isRawToolCall(text)) addMessage("ai", processAIText(text));
   streamBuffer = "";
 }
 
+/**
+ * Handles server-sent events from the OpenClaw Gateway.
+ * Manages the typing indicator lifecycle, assembles streamed response chunks,
+ * and displays finalised messages from the AI.
+ *
+ * @param {object} evt - Parsed event object from the gateway
+ */
 function handleEvent(evt) {
   const event   = evt.event || "";
   const payload = evt.payload || evt.data || {};
@@ -461,6 +561,12 @@ function handleEvent(evt) {
 }
 
 // ===== History Loader =====
+
+/**
+ * Fetches the stored conversation history for the current email session from
+ * OpenClaw and renders it into the chat. User messages are stripped of the
+ * email context prefix that was prepended before sending.
+ */
 function loadHistory() {
   callRpc("chat.history", { sessionKey, limit: 50 })
     .then(result => {
@@ -480,6 +586,11 @@ function loadHistory() {
     .catch(() => {});
 }
 
+/**
+ * Polls the chat history for the latest assistant reply after a message is sent.
+ * Used as a fallback when the streamed response was not captured via delta events.
+ * Retries after 2 seconds if the newest message ID hasn't changed.
+ */
 function fetchLatestReply() {
   if (historyFetching) return;
   historyFetching = true;
@@ -513,6 +624,13 @@ function fetchLatestReply() {
     .catch(() => { historyFetching = false; });
 }
 
+/**
+ * Normalises the various response shapes that chat.history can return into a
+ * flat array of message objects.
+ *
+ * @param {any} result - Raw RPC result
+ * @returns {Array}
+ */
 function extractMessages(result) {
   if (!result) return [];
   if (Array.isArray(result.messages)) return result.messages;
@@ -524,6 +642,13 @@ function extractMessages(result) {
   return [];
 }
 
+/**
+ * Extracts plain text from a message object, handling both string content
+ * and the array-of-blocks format used by some models.
+ *
+ * @param {object} msg
+ * @returns {string}
+ */
 function extractText(msg) {
   if (typeof msg.content === "string") return msg.content;
   if (Array.isArray(msg.content)) {
@@ -533,6 +658,15 @@ function extractText(msg) {
 }
 
 // ===== Send Message =====
+
+/**
+ * Sends a user message to OpenClaw via the chat.send RPC.
+ * Prepends the full email context on the first message of each conversation
+ * so the AI knows what it is analysing. An idempotency key prevents duplicate
+ * messages if the request is retried.
+ *
+ * @param {string} text - The message text to send
+ */
 function sendMessage(text) {
   if (!isConnected) {
     addMessage("err", "Not connected to gateway. Reconnecting…");
@@ -563,7 +697,9 @@ function sendMessage(text) {
     .catch(err => { hideTyping(); addMessage("err", "Send failed: " + err.message); });
 }
 
-// ===== Draft Reply =====
+// ===== Actions =====
+
+/** Asks the AI to draft a professional reply to the current email. */
 function draftReply() {
   if (!currentEmail) { addMessage("err", "No email selected."); return; }
   addMessage("user", "Draft a reply to this email");
@@ -572,6 +708,11 @@ function draftReply() {
   sendMessage("Please draft a professional reply to this email. Respond in the same language as the original email.");
 }
 
+/**
+ * Asks the AI to read the email and assign a priority label (Urgent / Medium / Minor).
+ * The AI appends a [LABEL:X] tag which processAIText converts into an Outlook
+ * category automatically.
+ */
 function autoLabel() {
   if (!currentEmail) { addMessage("err", "No email selected."); return; }
   addMessage("user", "Assign a priority label to this email");
@@ -580,6 +721,10 @@ function autoLabel() {
   sendMessage("Read this email and assign a priority label based on its urgency. Reply with a brief reason for your choice.");
 }
 
+/**
+ * Opens the last AI message as a reply draft in Outlook's native compose
+ * window using the Office.js displayReplyForm API.
+ */
 function useDraft() {
   const aiMsgs = document.querySelectorAll(".ai-msg .msg-body");
   const last = aiMsgs[aiMsgs.length - 1];
@@ -597,10 +742,17 @@ function useDraft() {
 }
 
 // ===== AI Label Action Parser =====
+
+/**
+ * Post-processes AI response text before displaying it:
+ * strips any echoed email context block, removes trailing separators,
+ * and detects a [LABEL:X] tag to automatically apply the Outlook category.
+ *
+ * @param {string} text - Raw AI response text
+ * @returns {string} Cleaned text safe to display
+ */
 function processAIText(text) {
-  // Strip echoed email context separator if the model repeated it
   let cleaned = text.replace(/\[Current email context\][\s\S]*?---\s*/g, "").trim();
-  // Strip trailing separator lines
   cleaned = cleaned.replace(/\n---+\s*$/g, "").trim();
   const match = cleaned.match(/\[LABEL:(Urgent|Medium|Minor)\]/i);
   if (match) {
@@ -612,6 +764,15 @@ function processAIText(text) {
 }
 
 // ===== Chat UI =====
+
+/**
+ * Appends a message bubble to the chat area.
+ * Roles: "user" (right-aligned), "ai" (left-aligned), "sys" (centred info),
+ * "err" (centred error). Enables the Use Draft button on any AI message.
+ *
+ * @param {"user"|"ai"|"sys"|"err"} role
+ * @param {string} text
+ */
 function addMessage(role, text) {
   const existing = document.querySelector(".streaming-bubble");
   if (existing) existing.remove();
@@ -631,6 +792,13 @@ function addMessage(role, text) {
   if (role === "ai") $("use-draft-btn").disabled = false;
 }
 
+/**
+ * Updates the live streaming bubble with the latest accumulated text as chunks
+ * arrive. Creates the bubble on first call, replaces its content on subsequent
+ * calls so the response appears to type out in real time.
+ *
+ * @param {string} text - Full accumulated stream text so far
+ */
 function renderStreamingBubble(text) {
   hideTyping();
   let el = document.querySelector(".streaming-bubble");
@@ -647,6 +815,7 @@ function renderStreamingBubble(text) {
   scrollDown();
 }
 
+/** Removes all non-system messages from the chat and disables the Use Draft button. */
 function clearChatMessages() {
   const container = $("chat-messages");
   container.querySelectorAll(".message:not(.sys-msg)").forEach(m => m.remove());
@@ -662,6 +831,12 @@ function scrollDown() {
 }
 
 // ===== Status Bar =====
+
+/**
+ * Updates the status bar colour and label to reflect the connection state.
+ *
+ * @param {"connected"|"connecting"|"disconnected"} state
+ */
 function setStatus(state) {
   const bar = $("status-bar");
   bar.className = "status-bar " + state;
@@ -670,6 +845,14 @@ function setStatus(state) {
 }
 
 // ===== Utilities =====
+
+/**
+ * Produces a short alphanumeric hash of a string using a djb2-style algorithm.
+ * Used to generate stable per-email session keys.
+ *
+ * @param {string} str
+ * @returns {string} Base-36 encoded absolute hash value
+ */
 function hashString(str) {
   let h = 0;
   for (let i = 0; i < str.length; i++) h = ((h << 5) - h + str.charCodeAt(i)) | 0;
@@ -677,6 +860,8 @@ function hashString(str) {
 }
 
 // ===== Event Bindings =====
+
+/** Wires up all button click handlers and textarea keyboard shortcuts. */
 function bindEvents() {
   $("send-btn").addEventListener("click", handleSend);
   $("draft-btn").addEventListener("click", draftReply);
@@ -703,6 +888,7 @@ function bindEvents() {
   });
 }
 
+/** Reads the input field, renders a user bubble, and sends the message. */
 function handleSend() {
   const input = $("msg-input");
   const text = input.value.trim();
