@@ -1,176 +1,168 @@
-# Academic Email Assistant POC
+# Academic Email Assistant
 
-An Outlook add-in that brings a locally-hosted AI agent directly into your email sidebar. Built on the OpenClaw Gateway WebSocket protocol with Ollama for fully local inference — no data leaves your machine.
+An Outlook add-in that brings a locally-hosted AI into your email sidebar. Ask questions about emails, draft replies, and auto-assign priority labels — all running on your own machine with no data sent to the cloud.
 
-## Features
+## What it does
 
-- 📧 **Email Context** — Automatically reads subject, sender, recipients, date, and body of the selected email
-- 💬 **Chat Interface** — Ask questions about the email, get summaries, translations, or any AI assistance
-- ✏️ **Draft Reply** — One-click reply drafting based on the email context
-- 📤 **Send Reply** — Opens Outlook's native reply compose with the drafted text pre-filled
-- 🌗 **Light/Dark Mode** — Auto-detects Outlook theme (Office.js + prefers-color-scheme)
-- 📌 **Pinned Sidebar** — Stays open when switching between emails (VersionOverrides v1.1)
-- 💾 **Per-Email Chat History** — Each email gets its own session; switching back restores the conversation
-- 📎 **Smart Context** — Email body sent only with the first message per email (saves tokens)
-- 🔄 **Auto-Reconnect** — WebSocket reconnects automatically with exponential backoff
-- 🔒 **Token-based Auth** — Gateway token stored in browser localStorage, never in code
+- **Chat** — Ask the AI anything about the open email (summarise, translate, explain)
+- **Draft Reply** — One click to generate a professional reply
+- **Auto Label** — AI reads the email and assigns Urgent / Medium / Minor automatically
+- **Manual Labels** — Apply priority labels yourself with one click
+- **Per-email history** — Each email keeps its own conversation when you switch back
+- **Dark/light mode** — Follows your Outlook theme automatically
 
-## Tech Stack
+---
+
+## Before you start — install these three things
+
+| Tool | What it does | Download |
+|---|---|---|
+| **Node.js 18+** | Runs the dev server | https://nodejs.org |
+| **Ollama** | Runs the AI model locally | https://ollama.com |
+| **Outlook Desktop** | Where the add-in lives | Included with Microsoft 365 |
+
+> After installing Ollama, make sure it is **running** before continuing (it usually starts automatically).
+
+---
+
+## Setup (run once)
+
+### 1. Clone or download this repo
+
+```
+git clone https://github.com/iammimii/AI-Agent-Concept-Workshop-Academic-Automation.git
+cd AI-Agent-Concept-Workshop-Academic-Automation
+```
+
+### 2. Run the setup script
+
+Open **PowerShell** in the project folder and run:
+
+```powershell
+npm run setup
+```
+
+This will automatically:
+- Install all npm dependencies
+- Install the HTTPS certificate Outlook requires
+- Download the AI model (~2 GB, takes a few minutes)
+- Create the OpenClaw config file
+- Set up the AI workspace
+
+> If PowerShell asks about execution policy, type `Y` and press Enter.
+
+---
+
+## Running the add-in
+
+You need **two terminals open at the same time** every time you use the add-in.
+
+### Terminal 1 — Start the AI gateway
+
+```powershell
+npm run gateway
+```
+
+Leave this running. After it starts, open this file to find your token:
+
+```
+C:\Users\<YourName>\.openclaw\openclaw.json
+```
+
+Look for the line: `"token": "abc123..."` — copy that value.
+
+### Terminal 2 — Start the dev server
+
+```powershell
+npm start
+```
+
+Leave this running too.
+
+---
+
+## Sideload the add-in into Outlook (one time only)
+
+1. Open **Outlook Desktop**
+2. Click **Get Add-ins** in the ribbon
+3. Go to **My Add-ins → Add a custom add-in → Add from file**
+4. Select the `manifest.xml` file from this project folder
+5. Click **OK**
+
+You should now see **Academic Assistant** in your Outlook ribbon.
+
+---
+
+## First-time token setup
+
+1. Open any email in Outlook
+2. Click **Academic Assistant** in the ribbon — a settings panel will appear automatically
+3. Paste the token you copied from `openclaw.json`
+4. Click **Save & Connect**
+5. The status bar at the top should turn **green** — you're connected!
+
+> You only need to do this once. The token is saved in Outlook's local storage.
+
+---
+
+## Using the add-in
+
+| What to do | How |
+|---|---|
+| Ask a question | Type in the chat box and press Enter |
+| Summarise the email | Type "summarise this email" |
+| Draft a reply | Click **Draft Reply** |
+| Use the drafted reply | Click **Use Draft** — it opens Outlook's compose window |
+| Auto-assign a label | Click **Auto Label** — AI decides Urgent/Medium/Minor |
+| Manually label | Click **Urgent**, **Medium**, or **Minor** in the label row |
+| Keep sidebar open | Click the 📌 pin icon in the top right of the sidebar |
+
+---
+
+## Troubleshooting
+
+**Status bar says "Disconnected"**
+- Make sure `npm run gateway` is running in a terminal
+- Check that the token in the settings panel matches `~/.openclaw/openclaw.json`
+
+**"Cannot connect" or "Not connected" error**
+- Both `npm run gateway` (Terminal 1) and `npm start` (Terminal 2) must be running
+- Try refreshing the add-in by closing and reopening the sidebar
+
+**Add-in doesn't appear in the ribbon**
+- Re-sideload: Get Add-ins → My Add-ins → find Academic Assistant → Remove → re-add from file
+
+**AI replies with something unexpected**
+- The model may be slow on first message — give it 10–20 seconds
+
+**Setup script fails on certificates**
+- Run PowerShell as Administrator and retry: `npm run setup`
+
+---
+
+## Tech stack
 
 | Layer | Technology |
 |---|---|
-| Add-in Framework | Office.js (Outlook taskpane) |
-| Build Tooling | Webpack 5 + webpack-dev-server |
-| AI Gateway | OpenClaw Gateway (local, WebSocket RPC) |
-| LLM | Ollama — qwen2.5:3b (self-hosted, ~2GB) |
-| Protocol | OpenClaw Gateway Protocol v3 (WebSocket) |
-| Auth | Token-based (stored in browser localStorage) |
+| Add-in UI | HTML, CSS, vanilla JavaScript |
+| Office integration | Office.js (Microsoft SDK) |
+| AI model | qwen2.5:3b via Ollama (local, ~2 GB) |
+| AI session management | OpenClaw Gateway (WebSocket) |
+| Build / dev server | Webpack 5 + webpack-dev-server |
 
 ## Architecture
 
 ```
-Outlook Add-in (HTTPS :3000)
+Outlook (ribbon + taskpane)
+        │
         │  wss://localhost:3000/ai-gateway
         ▼
-Webpack Dev Server proxy
+Webpack Dev Server  (:3000)
+        │
         │  ws://127.0.0.1:18789
         ▼
-OpenClaw Gateway (local)
+OpenClaw Gateway  (local)
         │
         ▼
-Ollama (qwen2.5:3b — http://127.0.0.1:11434)
+Ollama — qwen2.5:3b  (:11434)
 ```
-
-## Prerequisites
-
-- **Node.js 18+**
-- **OpenClaw** — `npm install -g openclaw`
-- **Ollama** — [ollama.com](https://ollama.com)
-- **Outlook Desktop** (Windows, Classic) or Outlook Web (OWA)
-- **Microsoft 365** account with sideloading enabled
-
-## Setup
-
-### 1. Install dependencies
-
-```bash
-npm install
-```
-
-### 2. Install dev certificates (first time only)
-
-```bash
-npx office-addin-dev-certs install
-```
-
-### 3. Pull the AI model
-
-```bash
-ollama pull qwen2.5:3b
-```
-
-> `qwen2.5:3b` is recommended — fast on CPU, ~2GB, runs on most laptops. You can swap it for `llama3.1:8b` for higher quality if your machine supports it.
-
-### 4. Configure OpenClaw
-
-Edit `~/.openclaw/openclaw.json` and ensure it contains the following (create the file if it doesn't exist):
-
-```json
-{
-  "agents": {
-    "defaults": {
-      "model": "ollama/qwen2.5:3b"
-    }
-  },
-  "gateway": {
-    "mode": "local",
-    "auth": {
-      "mode": "token"
-    },
-    "controlUi": {
-      "allowedOrigins": ["https://localhost:3000"],
-      "dangerouslyDisableDeviceAuth": true
-    }
-  },
-  "plugins": {
-    "entries": {
-      "ollama": { "enabled": true }
-    }
-  }
-}
-```
-
-### 5. Initialise the OpenClaw workspace
-
-The OpenClaw agent uses a workspace folder at `~/.openclaw/workspace/` to store its identity and memory. On first run it will run a bootstrap workflow if this folder isn't set up — to skip that, delete `BOOTSTRAP.md` from the workspace after the gateway first starts:
-
-```bash
-# Windows
-del "%USERPROFILE%\.openclaw\workspace\BOOTSTRAP.md"
-
-# macOS/Linux
-rm ~/.openclaw/workspace/BOOTSTRAP.md
-```
-
-Also add the following line to `~/.openclaw/workspace/AGENTS.md` at the top of the `## Session Startup` section:
-
-```
-Do not create or check for daily memory files automatically on session startup. Only create or update memory files when the user explicitly asks.
-```
-
-### 6. Start OpenClaw Gateway
-
-```bash
-npm run gateway
-```
-
-Note the gateway token from `~/.openclaw/openclaw.json` → `gateway.auth.token`.
-
-### 7. Start the dev server
-
-```bash
-npm start
-```
-
-### 8. Sideload the add-in
-
-In Outlook, go to **Get Add-ins → My Add-ins → Add a custom add-in → Add from file** and select `manifest.xml`.
-
-### 9. Enter your gateway token
-
-Open any email and click **Academic Assistant** in the ribbon. Click the **⚙ settings icon** in the sidebar and paste your token from `~/.openclaw/openclaw.json` → `gateway.auth.token`. Click Save — the status bar should turn green (Connected).
-
-> Each OpenClaw installation generates a unique token. The token is saved in browser localStorage so you only need to enter it once.
-
-## Running
-
-With both the gateway and dev server running, open any email in Outlook and click **Academic Assistant** in the ribbon. The add-in opens in a sidebar and automatically reads the selected email.
-
-- Type a question and press Enter or click Send
-- Click **Draft Reply** to generate a professional reply
-- Click **Use Draft** to open Outlook's reply compose with the draft pre-filled
-- Click the 📌 pin icon to keep the sidebar open when switching emails
-
-## Switching Models
-
-To use a different Ollama model, update two places:
-
-1. `~/.openclaw/openclaw.json` → `agents.defaults.model`
-2. `~/.openclaw/agents/main/agent/models.json` → add the model under the `ollama.models` array
-
-Then restart the gateway. Recommended models:
-
-| Model | Size | Notes |
-|---|---|---|
-| `qwen2.5:3b` | ~2GB | Default — fast, good instruction following |
-| `llama3.1:8b` | ~5GB | Higher quality, needs more RAM |
-| `llama3.2:3b` | ~2GB | Fast alternative |
-| `gemma3:4b` | ~3GB | Google, multimodal |
-
-## Gateway Token
-
-The gateway token is read from `~/.openclaw/openclaw.json` → `gateway.auth.token`. It is stored in browser `localStorage` under the key `acad-gateway-token`. To update it, click the ⚙ settings icon in the add-in sidebar.
-
-## License
-
-MIT

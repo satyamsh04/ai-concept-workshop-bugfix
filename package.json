@@ -4,6 +4,7 @@
   "description": "Academic Email Assistant — Outlook add-in for analysing and replying to university emails",
   "main": "src/taskpane/taskpane.js",
   "scripts": {
+    "setup": "powershell -ExecutionPolicy Bypass -File setup.ps1",
     "dev": "webpack serve --mode development --open",
     "build": "webpack --mode production",
     "start": "webpack serve --mode development",
