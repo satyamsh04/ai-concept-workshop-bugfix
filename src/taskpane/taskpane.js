@@ -206,10 +206,9 @@ function loadCategories() {
 
 function ensureMasterCategory(name, callback) {
   const colorMap = {
-    "Urgent":    Office.MailboxEnums.CategoryColor.Preset0,
-    "Extension": Office.MailboxEnums.CategoryColor.Preset3,
-    "Info":      Office.MailboxEnums.CategoryColor.Preset7,
-    "Done":      Office.MailboxEnums.CategoryColor.Preset5,
+    "Urgent": Office.MailboxEnums.CategoryColor.Preset0,
+    "Medium": Office.MailboxEnums.CategoryColor.Preset3,
+    "Minor":  Office.MailboxEnums.CategoryColor.Preset7,
   };
   Office.context.mailbox.masterCategories.getAsync(result => {
     if (result.status !== Office.AsyncResultStatus.Succeeded) { callback(); return; }
@@ -368,7 +367,7 @@ function isRawToolCall(text) {
 
 function flushStream() {
   const text = streamBuffer.trim();
-  if (text && !isRawToolCall(text)) addMessage("ai", text);
+  if (text && !isRawToolCall(text)) addMessage("ai", processAIText(text));
   streamBuffer = "";
 }
 
@@ -430,7 +429,7 @@ function handleEvent(evt) {
       const content = payload.content || payload.text || payload.message || "";
       if (content) {
         const text = typeof content === "string" ? content : JSON.stringify(content);
-        if (!isRawToolCall(text)) addMessage("ai", text);
+        if (!isRawToolCall(text)) addMessage("ai", processAIText(text));
       }
       if (!activeRunId) hideTyping();
       break;
@@ -473,7 +472,7 @@ function loadHistory() {
           const m = text.match(/User question:\s*([\s\S]*)/);
           addMessage("user", m ? m[1].trim() : text.trim());
         } else if (msg.role === "assistant") {
-          addMessage("ai", text.trim());
+          addMessage("ai", processAIText(text.trim()));
           lastShownMsgId = msg.__openclaw?.id || msg.responseId || msg.timestamp || null;
         }
       }
@@ -501,7 +500,7 @@ function fetchLatestReply() {
         if (text.trim() && msgId !== lastShownMsgId) {
           historyFetching = false;
           lastShownMsgId = msgId;
-          addMessage("ai", text.trim());
+          addMessage("ai", processAIText(text.trim()));
         } else if (msgId === lastShownMsgId) {
           historyFetching = false;
           setTimeout(fetchLatestReply, 2000);
@@ -548,7 +547,7 @@ function sendMessage(text) {
     const custom = getSavedSystemPrompt();
     let prefix = "";
     if (custom) prefix += `[System instructions]\n${custom}\n\n`;
-    prefix += `[Instructions: You are an email assistant. Answer the user's question directly. Do not create memory files, do not log email content, do not ask for confirmation, do not show next steps.]\n\n`;
+    prefix += `[Instructions: You are an email assistant. Answer the user's question directly. Do not repeat or quote the email body in your response. Do not create memory files, do not log email content, do not ask for confirmation, do not show next steps. When asked to assign or suggest a label/priority for this email, read the email and decide: Urgent = needs immediate action or is time-sensitive, Medium = needs attention but not critical, Minor = low priority or informational. Include exactly one of [LABEL:Urgent], [LABEL:Medium], or [LABEL:Minor] at the very end of your response.]\n\n`;
     prefix += `[Current email context]\nSubject: ${currentEmail.subject}\nFrom: ${currentEmail.from}\nTo: ${currentEmail.to}\nDate: ${currentEmail.date}\n\nBody:\n${body}\n\n---\n\n`;
     fullText = prefix + `User question: ${text}`;
     contextSentForEmail = currentEmail.subject;
@@ -573,6 +572,14 @@ function draftReply() {
   sendMessage("Please draft a professional reply to this email. Respond in the same language as the original email.");
 }
 
+function autoLabel() {
+  if (!currentEmail) { addMessage("err", "No email selected."); return; }
+  addMessage("user", "Assign a priority label to this email");
+  showTyping();
+  waitingForResponse = true;
+  sendMessage("Read this email and assign a priority label based on its urgency. Reply with a brief reason for your choice.");
+}
+
 function useDraft() {
   const aiMsgs = document.querySelectorAll(".ai-msg .msg-body");
   const last = aiMsgs[aiMsgs.length - 1];
@@ -587,6 +594,21 @@ function useDraft() {
   } catch (err) {
     addMessage("err", "Could not open draft: " + err.message);
   }
+}
+
+// ===== AI Label Action Parser =====
+function processAIText(text) {
+  // Strip echoed email context separator if the model repeated it
+  let cleaned = text.replace(/\[Current email context\][\s\S]*?---\s*/g, "").trim();
+  // Strip trailing separator lines
+  cleaned = cleaned.replace(/\n---+\s*$/g, "").trim();
+  const match = cleaned.match(/\[LABEL:(Urgent|Medium|Minor)\]/i);
+  if (match) {
+    const label = match[1].charAt(0).toUpperCase() + match[1].slice(1).toLowerCase();
+    toggleCategory(label);
+    cleaned = cleaned.replace(/\s*\[LABEL:[^\]]+\]/gi, "").trim();
+  }
+  return cleaned;
 }
 
 // ===== Chat UI =====
@@ -659,6 +681,7 @@ function bindEvents() {
   $("send-btn").addEventListener("click", handleSend);
   $("draft-btn").addEventListener("click", draftReply);
   $("use-draft-btn").addEventListener("click", useDraft);
+  $("auto-label-btn").addEventListener("click", autoLabel);
 
   document.querySelectorAll(".btn-label").forEach(btn => {
     btn.addEventListener("click", () => toggleCategory(btn.dataset.category));

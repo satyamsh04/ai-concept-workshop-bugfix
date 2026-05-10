@@ -276,6 +276,8 @@ html, body {
 .btn-draft:hover:not(:disabled) { background: var(--accent-subtle); }
 .btn-use-draft { border-color: var(--success); color: var(--success); }
 .btn-use-draft:hover:not(:disabled) { background: rgba(22,163,74,0.08); }
+.btn-auto-label { border-color: var(--warning); color: var(--warning); }
+.btn-auto-label:hover:not(:disabled) { background: rgba(217,119,6,0.08); }
 
 /* ===== Label Row ===== */
 .label-row {
