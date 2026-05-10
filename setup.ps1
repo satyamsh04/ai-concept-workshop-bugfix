@@ -1,4 +1,4 @@
-# Academic Email Assistant — Setup Script
+﻿# Academic Email Assistant — Setup Script
 # Run this once to configure everything before first use.
 
 $ErrorActionPreference = "Stop"
