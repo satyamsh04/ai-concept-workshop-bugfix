@@ -12,8 +12,8 @@
   <DefaultLocale>en-AU</DefaultLocale>
   <DisplayName DefaultValue="Academic Email Assistant"/>
   <Description DefaultValue="AI-powered assistant for analysing university emails and drafting professional replies."/>
-  <IconUrl DefaultValue="https://raw.githubusercontent.com/iammimii/AI-Agent-Concept-Workshop-Academic-Automation/main/assets/icon-64.png"/>
-  <HighResolutionIconUrl DefaultValue="https://raw.githubusercontent.com/iammimii/AI-Agent-Concept-Workshop-Academic-Automation/main/assets/icon-128.png"/>
+  <IconUrl DefaultValue="https://i.imgur.com/11jNkkt.png"/>
+  <HighResolutionIconUrl DefaultValue="https://i.imgur.com/11jNkkt.png"/>
   <SupportUrl DefaultValue="https://localhost:3000"/>
 
   <AppDomains>
@@ -85,10 +85,10 @@
 
     <Resources>
       <bt:Images>
-        <bt:Image id="Icon.16x16" DefaultValue="https://raw.githubusercontent.com/iammimii/AI-Agent-Concept-Workshop-Academic-Automation/main/assets/icon-16.png"/>
-        <bt:Image id="Icon.32x32" DefaultValue="https://raw.githubusercontent.com/iammimii/AI-Agent-Concept-Workshop-Academic-Automation/main/assets/icon-32.png"/>
-        <bt:Image id="Icon.80x80" DefaultValue="https://raw.githubusercontent.com/iammimii/AI-Agent-Concept-Workshop-Academic-Automation/main/assets/icon-80.png"/>
-        <bt:Image id="Icon.128x128" DefaultValue="https://raw.githubusercontent.com/iammimii/AI-Agent-Concept-Workshop-Academic-Automation/main/assets/icon-128.png"/>
+        <bt:Image id="Icon.16x16" DefaultValue="https://i.imgur.com/11jNkkt.png"/>
+        <bt:Image id="Icon.32x32" DefaultValue="https://i.imgur.com/11jNkkt.png"/>
+        <bt:Image id="Icon.80x80" DefaultValue="https://i.imgur.com/11jNkkt.png"/>
+        <bt:Image id="Icon.128x128" DefaultValue="https://i.imgur.com/11jNkkt.png"/>
       </bt:Images>
       <bt:Urls>
         <bt:Url id="Taskpane.Url" DefaultValue="https://localhost:3000/taskpane.html"/>
@@ -140,10 +140,10 @@
       </Hosts>
       <Resources>
         <bt:Images>
-          <bt:Image id="Icon.16x16" DefaultValue="https://raw.githubusercontent.com/iammimii/AI-Agent-Concept-Workshop-Academic-Automation/main/assets/icon-16.png"/>
-          <bt:Image id="Icon.32x32" DefaultValue="https://raw.githubusercontent.com/iammimii/AI-Agent-Concept-Workshop-Academic-Automation/main/assets/icon-32.png"/>
-          <bt:Image id="Icon.80x80" DefaultValue="https://raw.githubusercontent.com/iammimii/AI-Agent-Concept-Workshop-Academic-Automation/main/assets/icon-80.png"/>
-          <bt:Image id="Icon.128x128" DefaultValue="https://raw.githubusercontent.com/iammimii/AI-Agent-Concept-Workshop-Academic-Automation/main/assets/icon-128.png"/>
+          <bt:Image id="Icon.16x16" DefaultValue="https://i.imgur.com/11jNkkt.png"/>
+          <bt:Image id="Icon.32x32" DefaultValue="https://i.imgur.com/11jNkkt.png"/>
+          <bt:Image id="Icon.80x80" DefaultValue="https://i.imgur.com/11jNkkt.png"/>
+          <bt:Image id="Icon.128x128" DefaultValue="https://i.imgur.com/11jNkkt.png"/>
         </bt:Images>
         <bt:Urls>
           <bt:Url id="Taskpane.Url" DefaultValue="https://localhost:3000/taskpane.html"/>
