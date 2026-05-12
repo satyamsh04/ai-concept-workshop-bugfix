@@ -4,7 +4,7 @@ import "./taskpane.css";
 const GW_PORT = 18789;
 const BACKOFF_BASE = 1200;
 const BACKOFF_MAX = 20000;
-
+const MAX_REPLY_RETRIES = 5; // FIX #2: Max retries for fetchLatestReply
 
 // ===== State =====
 let socket = null;
@@ -14,7 +14,7 @@ let gwPort = 18789;
 let sessionKey = "agent:main:academic-email";
 let activeEmailId = null;
 let currentEmail = null;
-let contextSentForEmail = null;
+let contextSentForEmail = null; // FIX #3: Will store activeEmailId instead of subject
 let streamBuffer = "";
 let activeRunId = null;
 let waitingForResponse = false;
@@ -24,6 +24,7 @@ let historyFetching = false;
 let lastShownMsgId = null;
 let retryCount = 0;
 let retryTimer = null;
+let replyRetryCount = 0; // FIX #2: Retry counter for fetchLatestReply
 
 // ===== DOM Helper =====
 const $ = id => document.getElementById(id);
@@ -79,6 +80,7 @@ function applyTheme() {
       document.documentElement.setAttribute("data-theme", e.matches ? "dark" : "light");
     });
   }
+
   document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
 }
 
@@ -97,6 +99,7 @@ function loadToken() {
     authToken = "";
     gwPort = 18789;
   }
+
   if (!authToken) {
     showTokenPrompt();
   } else {
@@ -110,45 +113,57 @@ function loadToken() {
  */
 function showTokenPrompt() {
   const saved = getSavedSystemPrompt();
+  // FIX #4: Escape token value properly to prevent innerHTML injection
+  const escapedToken = (authToken || "").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  
   const div = document.createElement("div");
   div.className = "message sys-msg";
   div.id = "settings-panel";
-  div.innerHTML = `<div class="msg-body" style="text-align:left">
-    <strong>Setup</strong><br><br>
-    <label style="font-size:11px;color:var(--text-secondary)">Gateway Token</label>
-    <input type="password" id="token-field" placeholder="Paste your gateway token..."
-      value="${authToken || ""}"
-      style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;
-             background:var(--bg-input);color:var(--text-primary);font-size:12px;
-             margin-bottom:8px;font-family:monospace"/>
-    <label style="font-size:11px;color:var(--text-secondary)">Gateway Port</label>
-    <input type="number" id="port-field" placeholder="18789"
-      value="${gwPort || 18789}"
-      style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;
-             background:var(--bg-input);color:var(--text-primary);font-size:12px;
-             margin-bottom:8px;font-family:monospace"/>
-    <label style="font-size:11px;color:var(--text-secondary)">Custom Instructions (optional)</label>
-    <textarea id="prompt-field" rows="3"
-      placeholder="e.g. Always reply formally. Never use bullet points."
-      style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;
-             background:var(--bg-input);color:var(--text-primary);font-size:12px;
-             margin-bottom:8px;font-family:var(--font);resize:vertical">${saved}</textarea>
-    <button id="save-settings-btn"
-      style="padding:5px 12px;background:var(--accent);color:#fff;border:none;
-             border-radius:4px;cursor:pointer;font-size:12px">
-      Save &amp; Connect
-    </button>
-    <br><small style="color:var(--text-muted)">Token: ~/.openclaw/openclaw.json → gateway.auth.token · Port: default 18789</small>
-  </div>`;
+  div.innerHTML = `
+    <div style="padding:4px 0">
+      <strong>Setup</strong>
+    </div>
+    <div style="margin-bottom:8px">
+      Gateway Token
+      <input type="password" id="token-field" 
+             placeholder="Paste your gateway token..." 
+             value="${escapedToken}"
+             style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;
+                    background:var(--bg-input);color:var(--text-primary);font-size:12px;
+                    margin-bottom:8px;font-family:monospace">
+      Gateway Port
+      <input type="number" id="port-field" 
+             placeholder="18789" 
+             value="${gwPort || 18789}"
+             style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;
+                    background:var(--bg-input);color:var(--text-primary);font-size:12px;
+                    margin-bottom:8px;font-family:monospace">
+      Custom Instructions (optional)
+      <textarea id="prompt-field" rows="3" 
+                placeholder="e.g. Always reply formally. Never use bullet points."
+                style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;
+                       background:var(--bg-input);color:var(--text-primary);font-size:12px;
+                       margin-bottom:8px;font-family:var(--font);resize:vertical">${saved}</textarea>
+      <button id="save-settings-btn" 
+              style="width:100%;padding:8px;background:var(--accent);color:#fff;border:none;
+                     border-radius:4px;cursor:pointer;font-weight:500">Save &amp; Connect</button>
+    </div>
+    <div style="font-size:11px;opacity:0.6;line-height:1.4">
+      Token: ~/.openclaw/openclaw.json → gateway.auth.token · Port: default 18789
+    </div>
+  `;
+
   $("chat-messages").appendChild(div);
 
   setTimeout(() => {
     const btn = document.getElementById("save-settings-btn");
     if (!btn) return;
+
     btn.addEventListener("click", () => {
       const t = document.getElementById("token-field").value.trim();
       const port = parseInt(document.getElementById("port-field").value, 10);
       const p = document.getElementById("prompt-field").value.trim();
+
       if (t) {
         try { localStorage.setItem("acad-gateway-token", t); } catch (_) {}
         authToken = t;
@@ -158,8 +173,12 @@ function showTokenPrompt() {
         gwPort = port;
       }
       try { localStorage.setItem("acad-custom-instructions", p); } catch (_) {}
+
       div.remove();
       addMessage("sys", "Settings saved. Connecting to gateway...");
+      
+      // FIX #6: Reset retryCount when manually reconnecting from settings
+      retryCount = 0;
       connectGateway();
     });
   }, 80);
@@ -167,7 +186,11 @@ function showTokenPrompt() {
 
 /** Returns any custom system instructions saved by the user in the settings panel. */
 function getSavedSystemPrompt() {
-  try { return localStorage.getItem("acad-custom-instructions") || ""; } catch (_) { return ""; }
+  try {
+    return localStorage.getItem("acad-custom-instructions") || "";
+  } catch (_) {
+    return "";
+  }
 }
 
 // ===== Email Reader =====
@@ -180,24 +203,37 @@ function getSavedSystemPrompt() {
  */
 function readEmail() {
   const item = Office.context.mailbox.item;
-  if (!item) { showNoEmail(); return; }
+  if (!item) {
+    showNoEmail();
+    return;
+  }
 
   try {
     const subject = item.subject || "(No subject)";
-    const from    = item.from ? `${item.from.displayName} <${item.from.emailAddress}>` : "Unknown";
-    const date    = item.dateTimeCreated ? new Date(item.dateTimeCreated).toLocaleString() : "";
-    const to      = item.to ? item.to.map(r => `${r.displayName} <${r.emailAddress}>`).join(", ") : "";
+    const from = item.from
+      ? `${item.from.displayName} <${item.from.emailAddress}>`
+      : "Unknown";
+    const date = item.dateTimeCreated
+      ? new Date(item.dateTimeCreated).toLocaleString()
+      : "";
+    const to = item.to
+      ? item.to.map(r => `${r.displayName} <${r.emailAddress}>`).join(", ")
+      : "";
 
     item.body.getAsync(Office.CoercionType.Text, result => {
-      const body = result.status === Office.AsyncResultStatus.Succeeded ? result.value : "";
+      const body =
+        result.status === Office.AsyncResultStatus.Succeeded ? result.value : "";
+
       currentEmail = { subject, from, to, date, body };
 
       const newId = hashString(subject + "|" + from + "|" + date);
+
       if (newId !== activeEmailId) {
         activeEmailId = newId;
         sessionKey = `agent:main:academic-email-${newId}`;
-        contextSentForEmail = null;
+        contextSentForEmail = null; // FIX #3: Will be set to activeEmailId on first send
         lastShownMsgId = null;
+        replyRetryCount = 0; // FIX #2: Reset retry count for new email
         clearChatMessages();
         if (isConnected) loadHistory();
       }
@@ -244,10 +280,13 @@ function loadCategories() {
     $("label-row").style.display = "none";
     return;
   }
+
   $("label-row").style.display = "flex";
+
   item.categories.getAsync(result => {
     if (result.status !== Office.AsyncResultStatus.Succeeded) return;
     const active = (result.value || []).map(c => (c.displayName || c).toLowerCase());
+
     document.querySelectorAll(".btn-label").forEach(btn => {
       const cat = btn.dataset.category.toLowerCase();
       btn.classList.toggle("active", active.includes(cat));
@@ -267,14 +306,28 @@ function ensureMasterCategory(name, callback) {
   const colorMap = {
     "Urgent": Office.MailboxEnums.CategoryColor.Preset0,
     "Medium": Office.MailboxEnums.CategoryColor.Preset3,
-    "Minor":  Office.MailboxEnums.CategoryColor.Preset7,
+    "Minor": Office.MailboxEnums.CategoryColor.Preset7,
   };
+
   Office.context.mailbox.masterCategories.getAsync(result => {
-    if (result.status !== Office.AsyncResultStatus.Succeeded) { callback(); return; }
-    const exists = (result.value || []).some(c => c.displayName.toLowerCase() === name.toLowerCase());
-    if (exists) { callback(); return; }
+    if (result.status !== Office.AsyncResultStatus.Succeeded) {
+      callback();
+      return;
+    }
+
+    const exists = (result.value || []).some(
+      c => c.displayName.toLowerCase() === name.toLowerCase()
+    );
+    if (exists) {
+      callback();
+      return;
+    }
+
     const color = colorMap[name] || Office.MailboxEnums.CategoryColor.Preset0;
-    Office.context.mailbox.masterCategories.addAsync([{ displayName: name, color }], () => callback());
+    Office.context.mailbox.masterCategories.addAsync(
+      [{ displayName: name, color }],
+      () => callback()
+    );
   });
 }
 
@@ -286,15 +339,24 @@ function ensureMasterCategory(name, callback) {
  */
 function toggleCategory(name) {
   const item = Office.context.mailbox.item;
-  if (!item) { addMessage("err", "No email selected."); return; }
-  if (!item.categories) { addMessage("err", "Categories not supported in this Outlook version."); return; }
+  if (!item) {
+    addMessage("err", "No email selected.");
+    return;
+  }
+
+  if (!item.categories) {
+    addMessage("err", "Categories not supported in this Outlook version.");
+    return;
+  }
 
   item.categories.getAsync(result => {
     if (result.status !== Office.AsyncResultStatus.Succeeded) {
       addMessage("err", "Could not read categories: " + (result.error?.message || "unknown error"));
       return;
     }
+
     const active = (result.value || []).map(c => (c.displayName || c).toLowerCase());
+
     if (active.includes(name.toLowerCase())) {
       item.categories.removeAsync([name], () => loadCategories());
     } else {
@@ -334,9 +396,10 @@ function connectGateway() {
     return;
   }
 
+  // FIX #1: Send handshake immediately on connection without arbitrary delay
   socket.onopen = () => {
     setStatus("connecting");
-    setTimeout(() => { if (!isConnected) sendHandshake(); }, 2000);
+    sendHandshake();
   };
 
   socket.onmessage = e => handleIncoming(String(e.data || ""));
@@ -405,7 +468,7 @@ function sendHandshake() {
  *
  * @param {string} method - RPC method name (e.g. "chat.send")
  * @param {object} params - Method parameters
- * @returns {Promise<any>}
+ * @returns {Promise}
  */
 function callRpc(method, params) {
   return new Promise((resolve, reject) => {
@@ -413,6 +476,7 @@ function callRpc(method, params) {
       reject(new Error("Not connected"));
       return;
     }
+
     const id = String(++rpcSeq);
     pendingRpc.set(id, { resolve, reject });
     socket.send(JSON.stringify({ type: "req", id, method, params }));
@@ -429,11 +493,16 @@ function callRpc(method, params) {
  */
 function handleIncoming(raw) {
   let data;
-  try { data = JSON.parse(raw); } catch (_) { return; }
+  try {
+    data = JSON.parse(raw);
+  } catch (_) {
+    return;
+  }
 
   if (data.type === "res" && pendingRpc.has(String(data.id))) {
     const { resolve, reject } = pendingRpc.get(String(data.id));
     pendingRpc.delete(String(data.id));
+
     if (data.ok === false) {
       reject(new Error(data.error?.message || data.error?.code || "RPC error"));
     } else {
@@ -483,11 +552,10 @@ function flushStream() {
  * @param {object} evt - Parsed event object from the gateway
  */
 function handleEvent(evt) {
-  const event   = evt.event || "";
+  const event = evt.event || "";
   const payload = evt.payload || evt.data || {};
 
   switch (event) {
-
     case "connect.challenge":
       sendHandshake();
       break;
@@ -518,7 +586,10 @@ function handleEvent(evt) {
         flushStream();
         if (!activeRunId) {
           hideTyping();
-          if (waitingForResponse) { waitingForResponse = false; fetchLatestReply(); }
+          if (waitingForResponse) {
+            waitingForResponse = false;
+            fetchLatestReply();
+          }
         }
       }
       break;
@@ -582,16 +653,25 @@ function loadHistory() {
   callRpc("chat.history", { sessionKey, limit: 50 })
     .then(result => {
       const msgs = extractMessages(result);
+      // FIX #5: Track the last message ID even if history ends on user message
+      let latestId = null;
+      
       for (const msg of msgs) {
         const text = extractText(msg);
         if (!text) continue;
+
         if (msg.role === "user") {
           const m = text.match(/User question:\s*([\s\S]*)/);
           addMessage("user", m ? m[1].trim() : text.trim());
         } else if (msg.role === "assistant") {
           addMessage("ai", processAIText(text.trim()));
-          lastShownMsgId = msg.__openclaw?.id || msg.responseId || msg.timestamp || null;
+          latestId = msg.__openclaw?.id || msg.responseId || msg.timestamp || null;
         }
+      }
+      
+      // FIX #5: Set lastShownMsgId even if last message was user message
+      if (latestId) {
+        lastShownMsgId = latestId;
       }
     })
     .catch(() => {});
@@ -601,10 +681,22 @@ function loadHistory() {
  * Polls the chat history for the latest assistant reply after a message is sent.
  * Used as a fallback when the streamed response was not captured via delta events.
  * Retries after 2 seconds if the newest message ID hasn't changed.
+ * FIX #2: Now has a maximum retry limit to prevent infinite polling.
  */
 function fetchLatestReply() {
   if (historyFetching) return;
+  
+  // FIX #2: Stop after MAX_REPLY_RETRIES attempts
+  if (replyRetryCount >= MAX_REPLY_RETRIES) {
+    historyFetching = false;
+    replyRetryCount = 0;
+    hideTyping();
+    addMessage("sys", "No response received from AI. Try sending again.");
+    return;
+  }
+
   historyFetching = true;
+  replyRetryCount++;
 
   callRpc("chat.history", { sessionKey, limit: 10 })
     .then(result => {
@@ -614,25 +706,35 @@ function fetchLatestReply() {
         setTimeout(fetchLatestReply, 2000);
         return;
       }
+
       for (let i = msgs.length - 1; i >= 0; i--) {
         const msg = msgs[i];
         if (msg.role !== "assistant") continue;
+
         const text = extractText(msg);
         const msgId = msg.__openclaw?.id || msg.responseId || msg.timestamp || i;
+
         if (text.trim() && msgId !== lastShownMsgId) {
           historyFetching = false;
+          replyRetryCount = 0; // FIX #2: Reset counter on success
           lastShownMsgId = msgId;
           addMessage("ai", processAIText(text.trim()));
+          hideTyping();
+          return;
         } else if (msgId === lastShownMsgId) {
           historyFetching = false;
           setTimeout(fetchLatestReply, 2000);
+          return;
         }
-        return;
       }
+
       historyFetching = false;
       setTimeout(fetchLatestReply, 2000);
     })
-    .catch(() => { historyFetching = false; });
+    .catch(() => {
+      historyFetching = false;
+      setTimeout(fetchLatestReply, 2000);
+    });
 }
 
 /**
@@ -663,7 +765,10 @@ function extractMessages(result) {
 function extractText(msg) {
   if (typeof msg.content === "string") return msg.content;
   if (Array.isArray(msg.content)) {
-    return msg.content.filter(c => c.type === "text").map(c => c.text || "").join("\n");
+    return msg.content
+      .filter(c => c.type === "text")
+      .map(c => c.text || "")
+      .join("\n");
   }
   return "";
 }
@@ -687,15 +792,22 @@ function sendMessage(text) {
 
   let fullText = text;
 
-  if (currentEmail && contextSentForEmail !== currentEmail.subject) {
+  // FIX #3: Compare contextSentForEmail against activeEmailId instead of subject
+  if (currentEmail && contextSentForEmail !== activeEmailId) {
     const body = (currentEmail.body || "").slice(0, 3000);
     const custom = getSavedSystemPrompt();
+
     let prefix = "";
     if (custom) prefix += `[System instructions]\n${custom}\n\n`;
+
     prefix += `[Instructions: You are an email assistant. Answer the user's question directly. Do not repeat or quote the email body in your response. Do not create memory files, do not log email content, do not ask for confirmation, do not show next steps. When asked to assign or suggest a label/priority for this email, read the email and decide: Urgent = needs immediate action or is time-sensitive, Medium = needs attention but not critical, Minor = low priority or informational. Include exactly one of [LABEL:Urgent], [LABEL:Medium], or [LABEL:Minor] at the very end of your response.]\n\n`;
+
     prefix += `[Current email context]\nSubject: ${currentEmail.subject}\nFrom: ${currentEmail.from}\nTo: ${currentEmail.to}\nDate: ${currentEmail.date}\n\nBody:\n${body}\n\n---\n\n`;
+
     fullText = prefix + `User question: ${text}`;
-    contextSentForEmail = currentEmail.subject;
+    
+    // FIX #3: Store activeEmailId instead of subject
+    contextSentForEmail = activeEmailId;
   }
 
   callRpc("chat.send", {
@@ -704,19 +816,31 @@ function sendMessage(text) {
     deliver: false,
     idempotencyKey: crypto.randomUUID(),
   })
-    .then(() => { waitingForResponse = true; showTyping(); })
-    .catch(err => { hideTyping(); addMessage("err", "Send failed: " + err.message); });
+    .then(() => {
+      waitingForResponse = true;
+      replyRetryCount = 0; // FIX #2: Reset retry counter when sending new message
+      showTyping();
+    })
+    .catch(err => {
+      hideTyping();
+      addMessage("err", "Send failed: " + err.message);
+    });
 }
 
 // ===== Actions =====
 
 /** Asks the AI to draft a professional reply to the current email. */
 function draftReply() {
-  if (!currentEmail) { addMessage("err", "No email selected."); return; }
+  if (!currentEmail) {
+    addMessage("err", "No email selected.");
+    return;
+  }
   addMessage("user", "Draft a reply to this email");
   showTyping();
   waitingForResponse = true;
-  sendMessage("Please draft a professional reply to this email. Respond in the same language as the original email.");
+  sendMessage(
+    "Please draft a professional reply to this email. Respond in the same language as the original email."
+  );
 }
 
 /**
@@ -725,11 +849,16 @@ function draftReply() {
  * category automatically.
  */
 function autoLabel() {
-  if (!currentEmail) { addMessage("err", "No email selected."); return; }
+  if (!currentEmail) {
+    addMessage("err", "No email selected.");
+    return;
+  }
   addMessage("user", "Assign a priority label to this email");
   showTyping();
   waitingForResponse = true;
-  sendMessage("Read this email and assign a priority label based on its urgency. Reply with a brief reason for your choice.");
+  sendMessage(
+    "Read this email and assign a priority label based on its urgency. Reply with a brief reason for your choice."
+  );
 }
 
 /**
@@ -739,10 +868,16 @@ function autoLabel() {
 function useDraft() {
   const aiMsgs = document.querySelectorAll(".ai-msg .msg-body");
   const last = aiMsgs[aiMsgs.length - 1];
-  if (!last) { addMessage("err", "No draft available. Click Draft Reply first."); return; }
+  if (!last) {
+    addMessage("err", "No draft available. Click Draft Reply first.");
+    return;
+  }
 
   const item = Office.context.mailbox.item;
-  if (!item) { addMessage("err", "No email selected."); return; }
+  if (!item) {
+    addMessage("err", "No email selected.");
+    return;
+  }
 
   try {
     item.displayReplyForm(last.textContent);
@@ -763,14 +898,19 @@ function useDraft() {
  * @returns {string} Cleaned text safe to display
  */
 function processAIText(text) {
-  let cleaned = text.replace(/\[Current email context\][\s\S]*?---\s*/g, "").trim();
+  let cleaned = text
+    .replace(/\[Current email context\][\s\S]*?---\s*/g, "")
+    .trim();
   cleaned = cleaned.replace(/\n---+\s*$/g, "").trim();
+
   const match = cleaned.match(/\[LABEL:(Urgent|Medium|Minor)\]/i);
   if (match) {
-    const label = match[1].charAt(0).toUpperCase() + match[1].slice(1).toLowerCase();
+    const label =
+      match[1].charAt(0).toUpperCase() + match[1].slice(1).toLowerCase();
     toggleCategory(label);
     cleaned = cleaned.replace(/\s*\[LABEL:[^\]]+\]/gi, "").trim();
   }
+
   return cleaned;
 }
 
@@ -790,7 +930,12 @@ function addMessage(role, text) {
 
   const container = $("chat-messages");
   const div = document.createElement("div");
-  const classMap = { user: "message user-msg", ai: "message ai-msg", sys: "message sys-msg", err: "message err-msg" };
+  const classMap = {
+    user: "message user-msg",
+    ai: "message ai-msg",
+    sys: "message sys-msg",
+    err: "message err-msg"
+  };
   div.className = classMap[role] || "message sys-msg";
 
   const body = document.createElement("div");
@@ -798,8 +943,8 @@ function addMessage(role, text) {
   body.textContent = text;
   div.appendChild(body);
   container.appendChild(div);
-  scrollDown();
 
+  scrollDown();
   if (role === "ai") $("use-draft-btn").disabled = false;
 }
 
@@ -833,12 +978,26 @@ function clearChatMessages() {
   $("use-draft-btn").disabled = true;
 }
 
-function showTyping() { $("typing-indicator").style.display = "flex"; scrollDown(); }
-function hideTyping() { $("typing-indicator").style.display = "none"; }
-function setTypingLabel(text) { const l = $("typing-label"); if (l) l.textContent = text; showTyping(); }
+function showTyping() {
+  $("typing-indicator").style.display = "flex";
+  scrollDown();
+}
+
+function hideTyping() {
+  $("typing-indicator").style.display = "none";
+}
+
+function setTypingLabel(text) {
+  const l = $("typing-label");
+  if (l) l.textContent = text;
+  showTyping();
+}
+
 function scrollDown() {
   const c = $("chat-messages");
-  requestAnimationFrame(() => { c.scrollTop = c.scrollHeight; });
+  requestAnimationFrame(() => {
+    c.scrollTop = c.scrollHeight;
+  });
 }
 
 // ===== Status Bar =====
@@ -851,7 +1010,11 @@ function scrollDown() {
 function setStatus(state) {
   const bar = $("status-bar");
   bar.className = "status-bar " + state;
-  const labels = { connected: "Academic AI Ready", connecting: "Connecting…", disconnected: "Disconnected" };
+  const labels = {
+    connected: "Academic AI Ready",
+    connecting: "Connecting…",
+    disconnected: "Disconnected"
+  };
   $("status-text").textContent = labels[state] || state;
 }
 
@@ -885,14 +1048,21 @@ function bindEvents() {
 
   $("settings-btn").addEventListener("click", () => {
     const existing = document.getElementById("settings-panel");
-    if (existing) { existing.remove(); return; }
+    if (existing) {
+      existing.remove();
+      return;
+    }
     showTokenPrompt();
   });
 
   const input = $("msg-input");
   input.addEventListener("keydown", e => {
-    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
+    }
   });
+
   input.addEventListener("input", () => {
     input.style.height = "auto";
     input.style.height = Math.min(input.scrollHeight, 96) + "px";
@@ -904,6 +1074,7 @@ function handleSend() {
   const input = $("msg-input");
   const text = input.value.trim();
   if (!text) return;
+
   addMessage("user", text);
   input.value = "";
   input.style.height = "auto";
